@@ -32,16 +32,22 @@ except ImportError:
     print("ERROR: openai not installed. Run: pip install openai")
     sys.exit(1)
 
-# ── credentials (OpenEnv spec: OPENAI_API_KEY) ───────────────────────────────
+# ── credentials ──────────────────────────────────────────────────────────────
+# API_KEY is injected by the hackathon LiteLLM proxy (primary)
+# OPENAI_API_KEY is the local fallback for development
+API_KEY        = os.environ.get("API_KEY",        "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MODEL_NAME     = os.environ.get("MODEL_NAME",     "gpt-4o-mini")
 API_BASE_URL   = os.environ.get("API_BASE_URL",   "https://api.openai.com/v1")
 ER_ENV_URL     = os.environ.get("ER_ENV_URL",     "http://localhost:7860")
 
-if not OPENAI_API_KEY:
-    print("WARNING: OPENAI_API_KEY not set.")
+# Use hackathon proxy key first, fall back to direct OpenAI key
+_active_key = API_KEY or OPENAI_API_KEY
 
-client = OpenAI(api_key=OPENAI_API_KEY or "placeholder", base_url=API_BASE_URL)
+if not _active_key:
+    print("WARNING: Neither API_KEY nor OPENAI_API_KEY is set.")
+
+client = OpenAI(api_key=_active_key or "placeholder", base_url=API_BASE_URL)
 
 # ── direct Python imports ────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -208,11 +214,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # Auto-fall-back to greedy when no API key is set
-    use_greedy = args.greedy or not OPENAI_API_KEY
+    # Auto-fall-back to greedy only when no API key is available at all
+    use_greedy = args.greedy or not _active_key
     if use_greedy and not args.greedy:
-        print("INFO: OPENAI_API_KEY not set — using greedy baseline agent.")
-        print("      Set OPENAI_API_KEY and re-run for LLM inference.")
+        print("INFO: No API key set — using greedy baseline agent.")
+        print("      Set API_KEY (proxy) or OPENAI_API_KEY to use LLM inference.")
         print()
 
     print("=" * 64)
