@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11.9-slim
 
 # HF Spaces requires non-root user
 RUN useradd -m -u 1000 appuser
@@ -7,7 +7,8 @@ WORKDIR /app
 
 # Install dependencies (cached layer)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
 
 # Copy source code
 COPY src/          ./src/
