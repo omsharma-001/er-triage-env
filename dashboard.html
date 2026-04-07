@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ERTriageEnv — Training Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --border:   #2a2d3e;
+    --text:     #e2e4f0;
+    --muted:    #7b7e96;
+    --easy:     #22c55e;
+    --medium:   #f59e0b;
+    --hard:     #ef4444;
+    --blue:     #60a5fa;
+    --purple:   #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .task-btn {
+    padding: 6px 18px; border-radius: 20px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); cursor: pointer; font-size: 13px; transition: all .15s;
+  }
+  .task-btn.easy.active   { background: #14532d; border-color: var(--easy);   color: var(--easy); }
+  .task-btn.medium.active { background: #451a03; border-color: var(--medium); color: var(--medium); }
+  .task-btn.hard.active   { background: #450a0a; border-color: var(--hard);   color: var(--hard); }
+  .task-btn:not(.active):hover { border-color: var(--muted); color: var(--text); }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .live { background: var(--easy); animation: pulse 1.4s ease-in-out infinite; }
+  .idle { background: var(--muted); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+  .stat-label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .stat-value { font-size: 22px; font-weight: 500; }
+  .stat-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .chart-title { font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 14px; text-transform: uppercase; letter-spacing: .06em; }
+  canvas { width: 100% !important; }
+
+  .phase-bar-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 24px; }
+  .phase-bar-title { font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 14px; text-transform: uppercase; letter-spacing: .06em; }
+  .phase-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .phase-label { width: 60px; font-size: 12px; }
+  .phase-track { flex: 1; background: var(--border); border-radius: 4px; height: 8px; overflow: hidden; }
+  .phase-fill  { height: 100%; border-radius: 4px; transition: width .4s; }
+  .phase-pct   { width: 40px; font-size: 12px; color: var(--muted); text-align: right; }
+
+  .log-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .log-title { font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .log-scroll { max-height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; color: var(--muted); }
+  .log-line { padding: 2px 0; border-bottom: 1px solid var(--border); }
+  .log-line span.ep   { color: var(--blue); }
+  .log-line span.r    { color: var(--purple); }
+  .log-line span.d    { color: var(--hard); }
+  .log-line span.eval { color: var(--easy); }
+  .log-line span.task-easy   { color: var(--easy); }
+  .log-line span.task-medium { color: var(--medium); }
+  .log-line span.task-hard   { color: var(--hard); }
+
+  .upload-hint { color: var(--muted); font-size: 13px; padding: 32px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; margin-top: 8px; }
+  .file-drop { cursor: pointer; }
+  .file-drop:hover { border-color: var(--blue); color: var(--blue); }
+
+  .smoothing { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-left: auto; }
+  input[type=range] { width: 80px; accent-color: var(--blue); }
+
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .charts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>ERTriageEnv — Training Dashboard</h1>
+<p class="subtitle">Live metrics from DQN curriculum training</p>
+
+<div class="topbar">
+  <span id="status-indicator"><span class="status-dot idle" id="dot"></span><span id="status-text">No data loaded</span></span>
+  <button class="task-btn easy"   onclick="setTask('easy')"  >Easy</button>
+  <button class="task-btn medium" onclick="setTask('medium')">Medium</button>
+  <button class="task-btn hard"   onclick="setTask('hard')"  >Hard</button>
+  <label style="margin-left:auto;cursor:pointer;color:var(--blue);font-size:13px">
+    Load log file <input type="file" accept=".jsonl,.json" id="file-input" style="display:none" onchange="loadFile(event)">
+  </label>
+  <div class="smoothing">
+    Smoothing <input type="range" id="smooth-slider" min="1" max="50" value="10" oninput="onSmoothChange()"> <span id="smooth-val">10</span>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="stat-card">
+    <div class="stat-label">Episodes</div>
+    <div class="stat-value" id="stat-ep">—</div>
+    <div class="stat-sub" id="stat-ep-sub">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Latest reward</div>
+    <div class="stat-value" id="stat-reward">—</div>
+    <div class="stat-sub" id="stat-reward-sub">best eval: —</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Deaths this ep.</div>
+    <div class="stat-value" id="stat-deaths">—</div>
+    <div class="stat-sub" id="stat-deaths-sub">avg eval: —</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Epsilon (ε)</div>
+    <div class="stat-value" id="stat-eps">—</div>
+    <div class="stat-sub">exploration rate</div>
+  </div>
+</div>
+
+<div class="phase-bar-wrap">
+  <div class="phase-bar-title">Curriculum progress</div>
+  <div class="phase-row">
+    <span class="phase-label" style="color:var(--easy)">Easy</span>
+    <div class="phase-track"><div class="phase-fill" id="pb-easy" style="background:var(--easy);width:0%"></div></div>
+    <span class="phase-pct" id="pct-easy">0%</span>
+  </div>
+  <div class="phase-row">
+    <span class="phase-label" style="color:var(--medium)">Medium</span>
+    <div class="phase-track"><div class="phase-fill" id="pb-medium" style="background:var(--medium);width:0%"></div></div>
+    <span class="phase-pct" id="pct-medium">0%</span>
+  </div>
+  <div class="phase-row">
+    <span class="phase-label" style="color:var(--hard)">Hard</span>
+    <div class="phase-track"><div class="phase-fill" id="pb-hard" style="background:var(--hard);width:0%"></div></div>
+    <span class="phase-pct" id="pct-hard">0%</span>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="chart-card">
+    <div class="chart-title">Episode reward</div>
+    <canvas id="chart-reward" height="200"></canvas>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Patient deaths per episode</div>
+    <canvas id="chart-deaths" height="200"></canvas>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Eval reward (greedy policy)</div>
+    <canvas id="chart-eval" height="200"></canvas>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Training loss</div>
+    <canvas id="chart-loss" height="200"></canvas>
+  </div>
+</div>
+
+<div class="log-wrap">
+  <div class="log-title">Episode log</div>
+  <div id="log-area">
+    <div class="upload-hint file-drop" onclick="document.getElementById('file-input').click()">
+      Drop a <code>*.jsonl</code> log file here, or click to browse.<br>
+      <small>Generated by train.py in the <code>logs/</code> folder.</small>
+    </div>
+  </div>
+</div>
+
+<script>
+const TASK_EPISODES = { easy: 400, medium: 600, hard: 800 };
+const TASK_COLOR    = { easy: '#22c55e', medium: '#f59e0b', hard: '#ef4444' };
+
+let allData  = { easy: [], medium: [], hard: [] };
+let curTask  = 'easy';
+let smoothWin = 10;
+
+let charts = {};
+
+function chartDefaults() {
+  return {
+    responsive: true,
+    animation: { duration: 0 },
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#7b7e96', maxTicksLimit: 8, font: { size: 11 } }, grid: { color: '#2a2d3e' } },
+      y: { ticks: { color: '#7b7e96', font: { size: 11 } }, grid: { color: '#2a2d3e' } },
+    },
+  };
+}
+
+function makeChart(id, label, color) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'raw',      data: [], borderColor: color + '40', borderWidth: 1, pointRadius: 0, tension: 0 },
+        { label: 'smoothed', data: [], borderColor: color,        borderWidth: 2, pointRadius: 0, tension: 0.3 },
+      ],
+    },
+    options: { ...chartDefaults(), plugins: { legend: { display: false } } },
+  });
+}
+
+function initCharts() {
+  charts.reward = makeChart('chart-reward', 'Reward',  '#60a5fa');
+  charts.deaths = makeChart('chart-deaths', 'Deaths',  '#ef4444');
+  charts.eval   = makeChart('chart-eval',   'Eval r',  '#22c55e');
+  charts.loss   = makeChart('chart-loss',   'Loss',    '#a78bfa');
+}
+
+function smooth(arr, w) {
+  return arr.map((_, i) => {
+    const lo = Math.max(0, i - w + 1);
+    const slice = arr.slice(lo, i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+}
+
+function renderTask(task) {
+  curTask = task;
+  document.querySelectorAll('.task-btn').forEach(b => {
+    b.classList.toggle('active', b.classList.contains(task));
+  });
+
+  const rows = allData[task];
+  if (!rows.length) return;
+
+  const eps      = rows.map(r => r.episode);
+  const rewards  = rows.map(r => r.reward);
+  const deaths   = rows.map(r => r.deaths);
+  const losses   = rows.map(r => r.avg_loss || 0);
+  const evalRows = rows.filter(r => r.eval_reward != null);
+  const evalEps  = evalRows.map(r => r.episode);
+  const evalR    = evalRows.map(r => r.eval_reward);
+  const color    = TASK_COLOR[task];
+
+  function updateChart(chart, labels, raw, smoothed) {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = raw;
+    chart.data.datasets[1].data = smoothed;
+    chart.data.datasets[0].borderColor = color + '40';
+    chart.data.datasets[1].borderColor = color;
+    chart.update('none');
+  }
+
+  updateChart(charts.reward, eps,     rewards,  smooth(rewards,  smoothWin));
+  updateChart(charts.deaths, eps,     deaths,   smooth(deaths,   smoothWin));
+  updateChart(charts.loss,   eps,     losses,   smooth(losses,   smoothWin));
+  updateChart(charts.eval,   evalEps, evalR,    smooth(evalR,    Math.max(1, Math.floor(smoothWin/5))));
+
+  const last = rows[rows.length - 1];
+  document.getElementById('stat-ep').textContent   = last.episode;
+  document.getElementById('stat-ep-sub').textContent = `steps: ${last.steps_done}`;
+  document.getElementById('stat-reward').textContent = last.reward.toFixed(1);
+  const bestEval = evalR.length ? Math.max(...evalR).toFixed(1) : '—';
+  document.getElementById('stat-reward-sub').textContent = `best eval: ${bestEval}`;
+  document.getElementById('stat-deaths').textContent = last.deaths;
+  const avgDeaths = evalRows.length ? (evalRows.reduce((a,b) => a + b.eval_deaths, 0) / evalRows.length).toFixed(1) : '—';
+  document.getElementById('stat-deaths-sub').textContent = `avg eval: ${avgDeaths}`;
+  document.getElementById('stat-eps').textContent = last.epsilon != null ? last.epsilon.toFixed(3) : '—';
+
+  // Phase bars
+  for (const t of ['easy','medium','hard']) {
+    const cnt  = allData[t].length;
+    const total = TASK_EPISODES[t];
+    const pct  = Math.min(100, Math.round(cnt / total * 100));
+    document.getElementById('pb-'+t).style.width = pct + '%';
+    document.getElementById('pct-'+t).textContent = pct + '%';
+  }
+}
+
+function appendLogLines(rows) {
+  const area = document.getElementById('log-area');
+  if (area.querySelector('.upload-hint')) area.innerHTML = '<div class="log-scroll" id="log-scroll"></div>';
+  const scroll = document.getElementById('log-scroll');
+  const recent = rows.slice(-50);
+  scroll.innerHTML = recent.map(r => {
+    const evStr = r.eval_reward != null
+      ? ` <span class="eval">eval=${r.eval_reward.toFixed(1)}</span>` : '';
+    return `<div class="log-line">
+      [<span class="task-${r.task}">${r.task}</span>]
+      ep=<span class="ep">${r.episode}</span>
+      r=<span class="r">${r.reward.toFixed(1)}</span>
+      deaths=<span class="d">${r.deaths}</span>
+      ε=${r.epsilon?.toFixed(3) || '?'}
+      ${evStr}
+    </div>`;
+  }).join('');
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+function ingestLines(text) {
+  const lines = text.trim().split('\n');
+  for (const line of lines) {
+    try {
+      const row = JSON.parse(line);
+      const t = row.task || 'easy';
+      if (!allData[t]) allData[t] = [];
+      allData[t].push(row);
+    } catch(_) {}
+  }
+  const allRows = [...allData.easy, ...allData.medium, ...allData.hard];
+  if (!allRows.length) return;
+
+  appendLogLines(allRows.sort((a,b) => a.episode - b.episode));
+
+  document.getElementById('dot').className = 'status-dot live';
+  document.getElementById('status-text').textContent = `${allRows.length} episodes loaded`;
+
+  const activeTasks = ['easy','medium','hard'].filter(t => allData[t].length > 0);
+  if (!activeTasks.includes(curTask)) curTask = activeTasks[0];
+  renderTask(curTask);
+}
+
+function loadFile(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    allData = { easy: [], medium: [], hard: [] };
+    ingestLines(e.target.result);
+  };
+  reader.readAsText(file);
+}
+
+function setTask(t) { renderTask(t); }
+function onSmoothChange() {
+  smoothWin = +document.getElementById('smooth-slider').value;
+  document.getElementById('smooth-val').textContent = smoothWin;
+  renderTask(curTask);
+}
+
+// Demo data so the dashboard isn't blank on first open
+function loadDemoData() {
+  const lines = [];
+  let rewardBase = -300;
+  for (const [task, total] of [['easy',400],['medium',600],['hard',800]]) {
+    rewardBase = task === 'easy' ? -300 : task === 'medium' ? -350 : -380;
+    for (let ep = 1; ep <= Math.min(total, 200); ep++) {
+      const progress = ep / total;
+      const reward = rewardBase * (1 - progress * 0.55) + (Math.random() - 0.5) * 40;
+      const deaths = Math.max(0, Math.round(15 * (1 - progress * 0.6) + (Math.random()-0.5)*4));
+      const eps    = Math.max(0.05, 1.0 * Math.exp(-ep / (total * 0.35)));
+      const rec = { episode: ep, task, reward, deaths, avg_loss: 0.8 * Math.exp(-ep/100) + Math.random()*0.05,
+                    epsilon: eps, steps_done: ep * 20 };
+      if (ep % 50 === 0) {
+        rec.eval_reward = reward * 0.85 + (Math.random()-0.5)*20;
+        rec.eval_deaths = deaths * 0.9;
+        rec.eval_admitted = 5;
+      }
+      lines.push(JSON.stringify(rec));
+    }
+  }
+  ingestLines(lines.join('\n'));
+  document.getElementById('dot').className = 'status-dot idle';
+  document.getElementById('status-text').textContent = 'Demo data (load your own log to replace)';
+}
+
+initCharts();
+loadDemoData();
+</script>
+</body>
+</html>

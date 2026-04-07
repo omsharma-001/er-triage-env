@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Run pytest
+        run: PYTHONPATH=src:. pytest tests/ -v --tb=short
+
+      - name: Run custom validator
+        run: PYTHONPATH=src:. python validate.py
+
+      - name: Run openenv validate (local)
+        run: pip install openenv-core && openenv validate .
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t er-triage-env .
+
+      - name: Start container
+        run: |
+          docker run -d -p 7860:7860 --name triage er-triage-env
+          sleep 8
+
+      - name: GET /health → status healthy
+        run: |
+          curl -sf http://localhost:7860/health | python3 -c "
+          import json,sys; h=json.load(sys.stdin)
+          assert h['status']=='healthy', h
+          print('health OK:', h)"
+
+      - name: GET /metadata → name + description
+        run: |
+          curl -sf http://localhost:7860/metadata | python3 -c "
+          import json,sys; m=json.load(sys.stdin)
+          assert isinstance(m.get('name'),str)
+          assert isinstance(m.get('description'),str)
+          print('metadata OK:', m['name'])"
+
+      - name: GET /schema → action + observation + state
+        run: |
+          curl -sf http://localhost:7860/schema | python3 -c "
+          import json,sys; s=json.load(sys.stdin)
+          assert isinstance(s.get('action'),dict)
+          assert isinstance(s.get('observation'),dict)
+          assert isinstance(s.get('state'),dict)
+          print('schema OK:', list(s.keys()))"
+
+      - name: POST /mcp → jsonrpc 2.0
+        run: |
+          curl -sf -X POST http://localhost:7860/mcp \
+            -H 'Content-Type: application/json' -d '{}' | python3 -c "
+          import json,sys; m=json.load(sys.stdin)
+          assert m.get('jsonrpc')=='2.0', m
+          print('mcp OK: jsonrpc=', m['jsonrpc'])"
+
+      - name: POST /reset with empty body {}
+        run: |
+          curl -sf -X POST http://localhost:7860/reset \
+            -H 'Content-Type: application/json' -d '{}' | python3 -c "
+          import json,sys; obs=json.load(sys.stdin)
+          assert len(obs['patients'])>0
+          print('reset OK:', len(obs['patients']), 'patients')"
+
+      - name: POST /reset with task + seed
+        run: |
+          curl -sf -X POST http://localhost:7860/reset \
+            -H 'Content-Type: application/json' \
+            -d '{"task":"medium","seed":42}' | python3 -c "
+          import json,sys; obs=json.load(sys.stdin)
+          assert obs['task']=='medium'
+          assert len(obs['patients'])==20
+          print('reset medium OK:', obs['task'], len(obs['patients']), 'patients')"
+
+      - name: POST /step after reset
+        run: |
+          curl -sf -X POST http://localhost:7860/reset \
+            -H 'Content-Type: application/json' -d '{"task":"easy","seed":0}'
+          curl -sf -X POST http://localhost:7860/step \
+            -H 'Content-Type: application/json' \
+            -d '{"patient_index":0}' | python3 -c "
+          import json,sys; r=json.load(sys.stdin)
+          assert 'observation' in r
+          assert 'reward' in r
+          assert 'total' in r['reward']
+          print('step OK: reward=', r['reward']['total'])"
+
+      - name: GET /tasks → 3 tasks
+        run: |
+          curl -sf http://localhost:7860/tasks | python3 -c "
+          import json,sys; tasks=json.load(sys.stdin)
+          assert len(tasks)==3
+          print('tasks OK:', [t['name'] for t in tasks])"
+
+      - name: POST /grade → score in [0,1]
+        run: |
+          curl -sf -X POST http://localhost:7860/grade \
+            -H 'Content-Type: application/json' \
+            -d '{"task":"easy","actions":[0,1,0,2,1]}' | python3 -c "
+          import json,sys; g=json.load(sys.stdin)
+          assert 0.0<=g['score']<=1.0
+          print('grade OK: score=', g['score'])"
+
+      - name: openenv validate runtime (via URL)
+        run: |
+          pip install openenv-core
+          openenv validate http://localhost:7860
+
+      - name: Stop container
+        if: always()
+        run: docker stop triage || true

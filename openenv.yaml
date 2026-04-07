@@ -1,0 +1,199 @@
+name: er-triage-env
+version: "2.1.0"
+description: >
+  Hospital Emergency Room triage environment.
+  An AI agent acts as a triage nurse: at each step it receives a waiting room
+  of patients described by 11 clinical vitals and must decide which patient
+  to admit to a treatment bed next. The agent is scored on avoiding preventable
+  deaths, correct clinical prioritisation, and queue efficiency.
+  Severity scoring is derived from the NEWS2 (National Early Warning Score 2)
+  system used in UK NHS hospitals.
+
+author: Ambuj Singh
+license: MIT
+tags: [openenv, healthcare, triage, reinforcement-learning, medical-ai]
+
+server:
+  framework: fastapi
+  entry: src/envs/er_triage/server/app.py
+  port: 7860
+  health_endpoint: /health
+
+tasks:
+  - name: easy
+    description: >
+      10 patients, 3 treatment beds, clean vitals, no comorbidities.
+      Agent learns to map raw vitals to clinical severity and prioritise correctly.
+    max_steps: 20
+    difficulty: 1
+    queue_size: 10
+    beds: 3
+
+  - name: medium
+    description: >
+      20 patients, 5 beds. Comorbidities amplify severity non-linearly.
+      Some patients deteriorate rapidly. Balance urgency vs fairness.
+    max_steps: 40
+    difficulty: 2
+    queue_size: 20
+    beds: 5
+
+  - name: hard
+    description: >
+      30 patients, 8 beds. Noisy vitals (measurement error), random surge
+      arrivals every 10 steps, bed timeouts. Reason under genuine clinical
+      uncertainty using only noisy signals.
+    max_steps: 60
+    difficulty: 3
+    queue_size: 30
+    beds: 8
+
+models:
+  action:
+    class: ERTriageAction
+    type: pydantic.BaseModel
+    fields:
+      patient_index:
+        type: int
+        description: "0-based index of patient to admit, or -1 to hold queue"
+        minimum: -1
+  observation:
+    class: ERTriageObservation
+    type: pydantic.BaseModel
+    fields:
+      patients:
+        type: "List[PatientVitals]"
+        description: "Current waiting room patients"
+      beds_available:
+        type: int
+      step:
+        type: int
+      task:
+        type: str
+      done:
+        type: bool
+      reward:
+        type: "Optional[ERTriageReward]"
+        description: "None after reset(), populated after each step()"
+      info:
+        type: dict
+  reward:
+    class: ERTriageReward
+    type: pydantic.BaseModel
+    fields:
+      total:
+        type: float
+        description: "Scalar reward for this step"
+      severity_saved:
+        type: float
+        description: "+severity_true × 10"
+      priority_bonus:
+        type: float
+        description: "+2 if agent chose highest-severity patient"
+      wait_penalty:
+        type: float
+        description: "-0.5 × total_wait_minutes / 60"
+      death_penalty:
+        type: float
+        description: "-20 per patient who died this step"
+      hold_penalty:
+        type: float
+        description: "-5 if held queue when beds were free"
+  step_result:
+    class: StepResult
+    type: pydantic.BaseModel
+    fields:
+      observation: ERTriageObservation
+      reward: ERTriageReward
+      done: bool
+      info: dict
+  state:
+    class: ERTriageState
+    type: pydantic.BaseModel
+
+endpoints:
+  - method: GET
+    path: /health
+    description: Liveness check, returns {"status":"ok"}
+
+  - method: GET
+    path: /tasks
+    description: List all 3 tasks with config and action/observation space descriptions
+
+  - method: POST
+    path: /reset
+    request_body:
+      task: {type: string, enum: [easy, medium, hard]}
+      seed: {type: integer, nullable: true}
+    response: ERTriageObservation
+    description: Start a new episode. Returns initial observation (reward=null).
+
+  - method: POST
+    path: /step
+    request_body:
+      patient_index: {type: integer, minimum: -1}
+    response: StepResult
+    description: "Take one action. Returns StepResult: observation, reward, done, info"
+
+  - method: GET
+    path: /state
+    response: ERTriageState
+    description: Episode metadata without advancing the environment
+
+  - method: POST
+    path: /grade
+    request_body:
+      task: {type: string}
+      actions: {type: "array[int]"}
+    response:
+      score: {type: float, minimum: 0.0, maximum: 1.0}
+      deaths_score: float
+      priority_score: float
+      efficiency_score: float
+      explanation: string
+    description: Grade action sequence across 10 fixed-seed episodes
+
+grading:
+  endpoint: POST /grade
+  score_range: [0.0, 1.0]
+  episodes: 10
+  seeds: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109]
+  deterministic: true
+  components:
+    - name: deaths_score
+      weight: 0.50
+    - name: priority_score
+      weight: 0.30
+    - name: efficiency_score
+      weight: 0.20
+
+reward:
+  type: shaped
+  description: >
+    Per-step reward provides dense signal throughout the episode.
+    Never sparse — every step has a non-zero reward due to wait penalty.
+  components:
+    - {name: severity_saved,  formula: "+severity_true × 10",               description: "reward proportional to criticality of admitted patient"}
+    - {name: priority_bonus,  formula: "+2",                                 description: "bonus for choosing the most critical patient"}
+    - {name: wait_penalty,    formula: "-0.5 × total_wait_minutes / 60",    description: "accumulates every step for every waiting patient"}
+    - {name: death_penalty,   formula: "-20",                                description: "per patient whose severity reaches 1.0 before admission"}
+    - {name: hold_penalty,    formula: "-5",                                 description: "for holding queue when beds are free"}
+
+docker:
+  base_image: python:3.11-slim
+  port: 7860
+  non_root_user: appuser
+  build_cmd: "docker build -t er-triage-env ."
+  run_cmd: "docker run -p 7860:7860 er-triage-env"
+
+inference:
+  script: inference.py
+  credentials:
+    - OPENAI_API_KEY
+    - MODEL_NAME
+    - API_BASE_URL
+  runtime_limit_minutes: 20
+  baseline_scores:
+    easy:   {agent: greedy, score: 0.8429}
+    medium: {agent: greedy, score: 0.6000}
+    hard:   {agent: greedy, score: 0.7023}

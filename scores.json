@@ -1,0 +1,45 @@
+{
+  "scores": {
+    "easy": 0.8429,
+    "medium": 0.6,
+    "hard": 0.7023
+  },
+  "details": {
+    "easy": {
+      "score": 0.8429,
+      "deaths_score": 0.6857,
+      "priority_score": 1.0,
+      "efficiency_score": 1.0,
+      "avg_deaths": 2.2,
+      "avg_priority_rate": 1.0,
+      "avg_hold_rate": 0.0,
+      "episodes": 10,
+      "task": "easy"
+    },
+    "medium": {
+      "score": 0.6,
+      "deaths_score": 0.2,
+      "priority_score": 1.0,
+      "efficiency_score": 1.0,
+      "avg_deaths": 14.8,
+      "avg_priority_rate": 1.0,
+      "avg_hold_rate": 0.0,
+      "episodes": 10,
+      "task": "medium"
+    },
+    "hard": {
+      "score": 0.7023,
+      "deaths_score": 0.4045,
+      "priority_score": 1.0,
+      "efficiency_score": 1.0,
+      "avg_deaths": 19.1,
+      "avg_priority_rate": 1.0,
+      "avg_hold_rate": 0.0,
+      "episodes": 10,
+      "task": "hard"
+    }
+  },
+  "overall": 0.7151,
+  "model": "gpt-4o-mini",
+  "runtime_seconds": 0.02
+}

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-er-triage-env"
+version = "2.1.0"
+description = "Hospital ER Triage environment for OpenEnv — risk assessment and patient prioritisation"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core[core]>=0.2.2",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+inference = [
+    "openai>=1.30.0",
+    "requests>=2.31.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "httpx>=0.24.0",
+]
+
+[project.scripts]
+# uv run server  OR  python -m server.app
+server = "server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+# Expose root as importable package so:
+#   from client import ERTriageEnv  (after pip install)
+#   from server.models import ERTriageAction
+packages = ["server"]
+package-dir = {"server" = "server", "" = "."}
